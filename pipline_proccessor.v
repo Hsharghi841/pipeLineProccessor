@@ -44,7 +44,7 @@ module cpu (input clk, rst);
 	controlUnit cu (.inst(instruction), .aluop(aluop), .alusrc(alusrc), .memRead(memRead), 
 					.regWrite(regWrite), .memToReg(memToReg), .memWrite(memWrite), .jalr(jalr), .jal(jal), .beq(beq), .bltu(bltu));	
 
-	immGen ig (.inst(instruction), .immGenOut(immGenOut));
+	immGen ig (.inst(IFIDout[31:0]), .immGenOut(immGenOut));
 	
 	register PC (
 		.clk(clk),
@@ -63,21 +63,27 @@ module cpu (input clk, rst);
 		.out (instruction)
 	);
 
+    wire [63:0] IFIDout;
+    register (.n(64)) IFIDreg(.clk(clk), .rst(rst), .in({pcOut, instruction}), .out(IFIDout));
+
 	registerFile rf (
 		.clk (clk),
 		.rst (rst),
-		.rs1(instruction [19:15]),
-		.rs2(instruction [24:20]),
-		.rd(instruction [11:7]),
+		.rs1(IFIDout [19:15]),
+		.rs2(IFIDout [24:20]),
+		.rd(),
 		.wrData (memToReg ? dmOut : (jal | jalr ? pcOut + 4 : aluOut)),
 		.regWrite (regWrite),
 		.rdData1 (rfRd1),
 		.rdData2 (rfRd2)
 	);
 
+    wire [63:0] IDEXout;
+    register (.n(64)) IDEXreg(.clk(clk), .rst(rst), .in({IFIDout [11:7], immGenOut, rfRd2, rfRd1}), .out(IDEXout)); // سیم های جدید به سمت چپ اضافه شوند
+
 	alu aluInstance (
-		.op1(rfRd1),
-		.op2(alusrc ? immGenOut : rfRd2),
+		.op1(IDEXout[4:0]),
+		.op2(alusrc ? IDEXout[41:10] : IDEXout[9:5]),
 		.aluop(aluop),
 		.result(aluOut),
 		.zero(zero)
@@ -95,10 +101,10 @@ module cpu (input clk, rst);
 	
 endmodule
 
-module register (input clk, rst, input [31:0] in, output reg [31:0] out);
+module register #(parameter n) (input clk, rst, input [n - 1:0] in, output reg [n - 1:0] out);
 	always @(posedge clk, posedge rst) begin
 		if (rst)
-			out <= 32'd0;
+			out <= n'd0;
 		else
 			out <= in;
 	end

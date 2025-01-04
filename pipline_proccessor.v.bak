@@ -62,7 +62,7 @@ module cpu (input clk, rst);
     wire [63:0] IFIDout;
     register #(.n(64)) IFIDreg (.clk(clk), .rst(rst), .in({pcOut, instruction}), .out(IFIDout));
 
-	controlUnit cu (.inst(IFIDout[31:0]), .aluop(aluop), .alusrc(alusrc), .memRead(memRead), 
+	controlUnit cu (.inst(IFID[31:0]), .aluop(aluop), .alusrc(alusrc), .memRead(memRead), 
 					.regWrite(regWrite), .memToReg(memToReg), .memWrite(memWrite), .jalr(jalr), .jal(jal), .beq(beq), .bltu(bltu));
 
 	immGen ig (.inst(IFIDout[31:0]), .immGenOut(immGenOut));

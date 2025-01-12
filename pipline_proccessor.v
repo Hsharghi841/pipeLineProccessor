@@ -89,16 +89,20 @@ module cpu (input clk, rst);
 		.result(aluOut),
 		.zero(zero)
 	);
-    
+
+	wire [43:0] EXMEMout;
+    register #(.n(44)) EXMEMreg (.clk(clk), .rst(rst), .in({IDEXout[15:11], IDEXout[113:107], aluOut}), .out(EXMEMout));
+
 	memory #(.kind(`dataMemory)) dm (
 		.clk(clk),
 		.rst(rst),
-		.memRead(memRead),
-		.memWrite(memWrite),
-		.addressIn(aluOut),
-		.dataIn(rfRd2),
+		.memRead(EXMEMout[113]),
+		.memWrite(EXMEMout[112]),
+		.addressIn(EXMEMout[31:0]),
+		.dataIn(EXMEMout[43:39]),
 		.out(dmOut)
 	);
+	
 	
 endmodule
 

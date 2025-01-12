@@ -34,6 +34,8 @@ module cpu (input clk, rst);
 	wire [31:0] immGenOut;
 	wire [3:0] aluop;
 	wire memToReg, regWrite, memRead, memWrite, jalr, jal, beq, zero, bltu;
+
+	wire [74:0] MEMWBout;
 	
 	// assign regWrite = 1;
 	// assign alusrc = 0;
@@ -42,7 +44,7 @@ module cpu (input clk, rst);
 	// assign memToReg = 0	
 
 	
-	register PC (
+	register #(.n(32)) PC (
 		.clk(clk),
 		.rst (rst),
 		.in (jalr ? {aluOut & -2} : (jal | (beq & zero) | (bltu & aluOut[31]) ? (immGenOut << 1) + pcOut : pcOut + 4)),
@@ -73,39 +75,38 @@ module cpu (input clk, rst);
 		.rs1(IFIDout [19:15]),
 		.rs2(IFIDout [24:20]),
 		.rd(MEMWBout[36:32]),
-		.wrData (MEMWBout[36] ? MEMWBout[31:0] : (jal | jalr ? pcOut + 4 : MEMWBout[69:38])),
-		.regWrite (MEMWBout[37]),
+		.wrData (MEMWBout[73] ? MEMWBout[31:0] : (MEMWBout[72] | MEMWBout[71] ? pcOut + 4 : MEMWBout[68:37])),
+		.regWrite (MEMWBout[74]),
 		.rdData1 (rfRd1),
 		.rdData2 (rfRd2)
 	);
 
-    wire [116:0] IDEXout;
-    register #(.n(117)) IDEXreg(.clk(clk), .rst(rst), .in({regWrite, aluop,alusrc,memRead,memWrite,memToReg,jal,jalr,beq,bltu, immGenOut, rfRd2, rfRd1,IFIDout [11:7]}), .out(IDEXout)); // سیم های جدید به سمت چپ اضافه شوند
-
+    wire [113:0] IDEXout;
+    register #(.n(114)) IDEXreg(.clk(clk), .rst(rst), .in({regWrite, aluop,alusrc,memRead,memWrite,memToReg,jal,jalr,beq,bltu, immGenOut, rfRd2, rfRd1,IFIDout [11:7]}), .out(IDEXout)); // سیم های جدید به سمت چپ اضافه شوند
+//                                                            113   112 109  108    107      106      105    104 103 102  101  100    69  68 37   36 5   4          0
 	alu aluInstance (
-		.op1(IDEXout[4:0]),
-		.op2(alusrc ? IDEXout[99:68] : IDEXout[67:36]),
-		.aluop(aluop),
+		.op1(IDEXout[36:5]),
+		.op2(IDEXout[108] ? IDEXout[100:69] : IDEXout[68:37]),
+		.aluop(IDEXout[112:109]),
 		.result(aluOut),
 		.zero(zero)
 	);
 
-	wire [49:0] EXMEMout;
-    register #(.n(50)) EXMEMreg (.clk(clk), .rst(rst), .in({IFIDout[116], IFIDout[11:7], IDEXout[15:11], IDEXout[113:107], aluOut}), .out(EXMEMout));
-	//                                                           49       48        44   43         39   38            32  31   0
+	wire [76:0] EXMEMout;
+    register #(.n(77)) EXMEMreg (.clk(clk), .rst(rst), .in({IDEXout[113], IDEXout[4:0], IDEXout[68:37], IDEXout[107:101], aluOut}), .out(EXMEMout));
+	//                                                           76       75        71   70        39    38         32     31   0
 	memory #(.kind(`dataMemory)) dm (
 		.clk(clk),
 		.rst(rst),
 		.memRead(EXMEMout[38]),
 		.memWrite(EXMEMout[37]),
 		.addressIn(EXMEMout[31:0]),
-		.dataIn(EXMEMout[43:39]),
+		.dataIn(EXMEMout[70:39]),
 		.out(dmOut)
 	);
 
-	wire [74:0] MEMWBout;
-    register #(.n(75)) MEMWBreg (.clk(clk), .rst(rst), .in({EXMEMout[36:32], EXMEMout[31:0], EXMEMout[49:44], dmOut}), .out(MEMWBout));
-//                                                          74           70   69         38   37          32  31   0
+    register #(.n(75)) MEMWBreg (.clk(clk), .rst(rst), .in({EXMEMout[76], EXMEMout[36:32], EXMEMout[31:0], EXMEMout[75:71], dmOut}), .out(MEMWBout));
+//                                                               74       73           69   68         37   36          32  31   0
 
 	
 endmodule
@@ -162,7 +163,7 @@ module registerFile (input clk, rst, regWrite, input [4:0] rs1, rs2, rd, input [
 			$readmemh("reg.hex", cells);
 		else if (regWrite)
 			cells [rd] <= wrData;
-		cells[0] = 0;
+			cells[0] = 0;
 	end
 	assign rdData1 = cells[rs1];
 	assign rdData2 = cells[rs2];

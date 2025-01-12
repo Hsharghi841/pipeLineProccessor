@@ -72,15 +72,15 @@ module cpu (input clk, rst);
 		.rst (rst),
 		.rs1(IFIDout [19:15]),
 		.rs2(IFIDout [24:20]),
-		.rd(),
-		.wrData (memToReg ? dmOut : (jal | jalr ? pcOut + 4 : aluOut)),
-		.regWrite (regWrite),
+		.rd(MEMWBout[36:32]),
+		.wrData (MEMWBout[36] ? MEMWBout[31:0] : (jal | jalr ? pcOut + 4 : MEMWBout[69:38])),
+		.regWrite (MEMWBout[37]),
 		.rdData1 (rfRd1),
 		.rdData2 (rfRd2)
 	);
 
-    wire [63:0] IDEXout;
-    register #(.n(116)) IDEXreg(.clk(clk), .rst(rst), .in({aluop,alusrc,memRead,memWrite,memToReg,jal,jalr,beq,bltu, immGenOut, rfRd2, rfRd1,IFIDout [11:7]}), .out(IDEXout)); // سیم های جدید به سمت چپ اضافه شوند
+    wire [116:0] IDEXout;
+    register #(.n(117)) IDEXreg(.clk(clk), .rst(rst), .in({regWrite, aluop,alusrc,memRead,memWrite,memToReg,jal,jalr,beq,bltu, immGenOut, rfRd2, rfRd1,IFIDout [11:7]}), .out(IDEXout)); // سیم های جدید به سمت چپ اضافه شوند
 
 	alu aluInstance (
 		.op1(IDEXout[4:0]),
@@ -90,19 +90,23 @@ module cpu (input clk, rst);
 		.zero(zero)
 	);
 
-	wire [43:0] EXMEMout;
-    register #(.n(44)) EXMEMreg (.clk(clk), .rst(rst), .in({IDEXout[15:11], IDEXout[113:107], aluOut}), .out(EXMEMout));
-
+	wire [49:0] EXMEMout;
+    register #(.n(50)) EXMEMreg (.clk(clk), .rst(rst), .in({IFIDout[116], IFIDout[11:7], IDEXout[15:11], IDEXout[113:107], aluOut}), .out(EXMEMout));
+	//                                                           49       48        44   43         39   38            32  31   0
 	memory #(.kind(`dataMemory)) dm (
 		.clk(clk),
 		.rst(rst),
-		.memRead(EXMEMout[113]),
-		.memWrite(EXMEMout[112]),
+		.memRead(EXMEMout[38]),
+		.memWrite(EXMEMout[37]),
 		.addressIn(EXMEMout[31:0]),
 		.dataIn(EXMEMout[43:39]),
 		.out(dmOut)
 	);
-	
+
+	wire [74:0] MEMWBout;
+    register #(.n(75)) MEMWBreg (.clk(clk), .rst(rst), .in({EXMEMout[36:32], EXMEMout[31:0], EXMEMout[49:44], dmOut}), .out(MEMWBout));
+//                                                          74           70   69         38   37          32  31   0
+
 	
 endmodule
 

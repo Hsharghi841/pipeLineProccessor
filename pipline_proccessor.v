@@ -20,7 +20,7 @@ module test;
 		#`period;
 		for (i = 0; i < 32; i = i + 1)
 			$display ("r[%d]=%d", i, dut.rf.cells[i]);
-		$finish;
+//		$finish;
 	end
 endmodule
 
@@ -81,20 +81,47 @@ module cpu (input clk, rst);
 		.rdData2 (rfRd2)
 	);
 
-    wire [113:0] IDEXout;
-    register #(.n(114)) IDEXreg(.clk(clk), .rst(rst), .in({regWrite, aluop,alusrc,memRead,memWrite,memToReg,jal,jalr,beq,bltu, immGenOut, rfRd2, rfRd1,IFIDout [11:7]}), .out(IDEXout)); // سیم های جدید به سمت چپ اضافه شوند
-//                                                            113   112 109  108    107      106      105    104 103 102  101  100    69  68 37   36 5   4          0
-	alu aluInstance (
-		.op1(IDEXout[36:5]),
-		.op2(IDEXout[108] ? IDEXout[100:69] : IDEXout[68:37]),
+    wire [123:0] IDEXout;
+    register #(.n(124)) IDEXreg(.clk(clk), .rst(rst), .in({IFIDout[24:20],IFIDout[19:15],regWrite, aluop,alusrc,memRead,memWrite,memToReg,jal,jalr,beq,bltu, immGenOut, rfRd2, rfRd1,IFIDout [11:7]}), .out(IDEXout)); // سیم های جدید به سمت چپ اضافه شوند
+//                                                         123                           113   112 109  108    107      106      105    104 103 102  101  100    69  68 37   36 5   4          0
+	wire [76:0] EXMEMout;
+    // Instantiate dataHazard module
+    wire [1:0] forwardA, forwardB;
+    dataHazard dh (
+        .rs1(IDEXout[118:114]),
+        .rs2(IDEXout[123:119]),
+        .ex_rd(EXMEMout[75:71]),
+        .mem_rd(MEMWBout[36:32]),
+        .wb_rd(MEMWBout[36:32]),
+        .ex_regWrite(EXMEMout[76]),
+        .mem_regWrite(MEMWBout[74]),
+        .wb_regWrite(MEMWBout[74]),
+        .forwardA(forwardA),
+        .forwardB(forwardB)
+    );
+
+    // Update ALU inputs based on forwarding
+    wire [31:0] aluIn1, aluIn2;
+    assign aluIn1 = (forwardA == 2'b10) ? EXMEMout[31:0] :
+                    (forwardA == 2'b01) ? MEMWBout[68:37] :
+                    (forwardA == 2'b11) ? MEMWBout[31:0] : IDEXout[36:5];
+
+    assign aluIn2 = (forwardB == 2'b10) ? EXMEMout[31:0] :
+                    (forwardB == 2'b01) ? MEMWBout[31:0] :
+                    (forwardB == 2'b11) ? MEMWBout[31:0] : IDEXout[108] ? IDEXout[100:69] : IDEXout[68:37];
+
+
+    alu aluInstance (
+		.op1(aluIn1),
+		.op2(aluIn2),
 		.aluop(IDEXout[112:109]),
 		.result(aluOut),
 		.zero(zero)
 	);
 
-	wire [76:0] EXMEMout;
+	
     register #(.n(77)) EXMEMreg (.clk(clk), .rst(rst), .in({IDEXout[113], IDEXout[4:0], IDEXout[68:37], IDEXout[107:101], aluOut}), .out(EXMEMout));
-	//                                                           76       75        71   70        39    38         32     31   0
+	//                                                 76       75        71   70        39    38         32     31   0
 	memory #(.kind(`dataMemory)) dm (
 		.clk(clk),
 		.rst(rst),
@@ -126,7 +153,7 @@ module memory #(parameter kind) (input clk, rst, memRead, memWrite, input [31:0]
 		if (rst) begin
 			if (kind == `dataMemory)
 				$readmemh("data.hex", cells);
-			else
+			else 
 				$readmemh("instructions.hex", cells);
 		end
 		// little endian
@@ -264,5 +291,31 @@ module controlUnit (input [31:0] inst, output reg alusrc, memRead, memToReg, reg
 			end
 		endcase
 	end
+endmodule
+
+
+
+module dataHazard (
+    input [4:0] rs1, rs2, ex_rd, mem_rd, wb_rd,
+    input ex_regWrite, mem_regWrite, wb_regWrite,
+    output reg [1:0] forwardA, forwardB
+);
+    always @(*) begin
+        // Default forwarding signals
+        forwardA = 2'b00;
+        forwardB = 2'b00;
+
+        // EXE to EXE forwarding
+        if (ex_regWrite && (ex_rd != 0) && (ex_rd == rs1)) forwardA = 2'b10;
+        if (ex_regWrite && (ex_rd != 0) && (ex_rd == rs2)) forwardB = 2'b10;
+
+        // MEM to EXE forwarding
+        if (mem_regWrite && (mem_rd != 0) && (mem_rd == rs1) && !(ex_regWrite && (ex_rd == rs1))) forwardA = 2'b01;
+        if (mem_regWrite && (mem_rd != 0) && (mem_rd == rs2) && !(ex_regWrite && (ex_rd == rs2))) forwardB = 2'b01;
+
+        // WB to EXE forwarding
+        if (wb_regWrite && (wb_rd != 0) && (wb_rd == rs1) && !(ex_regWrite && (ex_rd == rs1)) && !(mem_regWrite && (mem_rd == rs1))) forwardA = 2'b11;
+        if (wb_regWrite && (wb_rd != 0) && (wb_rd == rs2) && !(ex_regWrite && (ex_rd == rs2)) && !(mem_regWrite && (mem_rd == rs2))) forwardB = 2'b11;
+    end
 endmodule
 

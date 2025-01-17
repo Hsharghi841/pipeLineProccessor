@@ -33,21 +33,27 @@ module cpu (input clk, rst);
 	wire [31:0] pcOut, instruction, dmOut, aluOut, rfRd1, rfRd2;
 	wire [31:0] immGenOut;
 	wire [3:0] aluop;
-	wire memToReg, regWrite, memRead, memWrite, jalr, jal, beq, zero, bltu;
+	wire memToReg, regWrite, memRead, memWrite, jalr, jal, beq, zero, bzero, bltu;
 
+	
+	wire stall;
+
+    wire [63:0] IFIDout;
+    wire [123:0] IDEXout;
+	wire [76:0] EXMEMout;
 	wire [74:0] MEMWBout;
-	
-	// assign regWrite = 1;
-	// assign alusrc = 0;
-	// assign memRead = 0;
-	// assign memWrite = 0;
-	// assign memToReg = 0	
 
 	
-	register #(.n(32)) PC (
+	registerpc #(.n(32)) PC (
 		.clk(clk),
+		.load(stall),
 		.rst (rst),
-		.in (jalr ? {aluOut & -2} : (jal | (beq & zero) | (bltu & aluOut[31]) ? (immGenOut << 1) + pcOut : pcOut + 4)),
+		.in (
+			jalr ? {aluOut & -2} :
+			jal | (IDEXout[102] & bzero) | (bltu & aluOut[31]) ? (immGenOut << 1) + IFIDout[63:32] :
+			pcOut + 4
+			),
+		.in2(IFIDout[63:32]),
 		.out (pcOut)
 	);
 
@@ -61,7 +67,6 @@ module cpu (input clk, rst);
 		.out (instruction)
 	);
 
-    wire [63:0] IFIDout;
     register #(.n(64)) IFIDreg (.clk(clk), .rst(rst), .in({pcOut, instruction}), .out(IFIDout));
 
 	controlUnit cu (.inst(IFIDout[31:0]), .aluop(aluop), .alusrc(alusrc), .memRead(memRead), 
@@ -81,10 +86,12 @@ module cpu (input clk, rst);
 		.rdData2 (rfRd2)
 	);
 
-    wire [123:0] IDEXout;
-    register #(.n(124)) IDEXreg(.clk(clk), .rst(rst), .in({IFIDout[24:20],IFIDout[19:15],regWrite, aluop,alusrc,memRead,memWrite,memToReg,jal,jalr,beq,bltu, immGenOut, rfRd2, rfRd1,IFIDout [11:7]}), .out(IDEXout)); // سیم های جدید به سمت چپ اضافه شوند
-//                                                         123                           113   112 109  108    107      106      105    104 103 102  101  100    69  68 37   36 5   4          0
-	wire [76:0] EXMEMout;
+	hazardDetection hd (IFIDout [19:15], IFIDout [24:20], IDEXout [4:0], EXMEMout[75:71], IDEXout[107], EXMEMout[38], beq, IDEXout[102], stall);
+
+	assign bzero = (rfRd1 - rfRd2) == 0;
+
+    register #(.n(124)) IDEXreg(.clk(clk), .rst(rst), .in({IFIDout[24:20],IFIDout[19:15], stall ? 1'b0 : regWrite, aluop,alusrc, stall ? 1'b0 : memRead, stall ? 1'b0 : memWrite,memToReg,jal,jalr,beq,bltu, immGenOut, rfRd2, rfRd1,IFIDout [11:7]}), .out(IDEXout));
+//                                                         123                                           113   112 109  108                 107                   106      105    104 103 102  101  100    69  68 37   36 5   4          0
     // Instantiate dataHazard module
     wire [1:0] forwardA, forwardB;
     dataHazard dh (
@@ -103,25 +110,25 @@ module cpu (input clk, rst);
     // Update ALU inputs based on forwarding
     wire [31:0] aluIn1, aluIn2;
     assign aluIn1 = (forwardA == 2'b10) ? EXMEMout[31:0] :
-                    (forwardA == 2'b01) ? MEMWBout[68:37] :
+                    (forwardA == 2'b01) ? MEMWBout[73] ? MEMWBout[31:0] : MEMWBout[68:37] :
                     (forwardA == 2'b11) ? MEMWBout[31:0] : IDEXout[36:5];
 
     assign aluIn2 = (forwardB == 2'b10) ? EXMEMout[31:0] :
-                    (forwardB == 2'b01) ? MEMWBout[31:0] :
+                    (forwardB == 2'b01) ? MEMWBout[73] ? MEMWBout[31:0] : MEMWBout[68:37] :
                     (forwardB == 2'b11) ? MEMWBout[31:0] : IDEXout[108] ? IDEXout[100:69] : IDEXout[68:37];
 
 
     alu aluInstance (
 		.op1(aluIn1),
-		.op2(aluIn2),
+		.op2(IDEXout[108] ? IDEXout[100:69] : aluIn2),
 		.aluop(IDEXout[112:109]),
 		.result(aluOut),
 		.zero(zero)
 	);
 
 	
-    register #(.n(77)) EXMEMreg (.clk(clk), .rst(rst), .in({IDEXout[113], IDEXout[4:0], IDEXout[68:37], IDEXout[107:101], aluOut}), .out(EXMEMout));
-	//                                                 76       75        71   70        39    38         32     31   0
+    register #(.n(77)) EXMEMreg (.clk(clk), .rst(rst), .in({IDEXout[113], IDEXout[4:0], aluIn2, IDEXout[107:101], aluOut}), .out(EXMEMout));
+	//                                                          76       75        71   70   39    38         32     31   0
 	memory #(.kind(`dataMemory)) dm (
 		.clk(clk),
 		.rst(rst),
@@ -282,7 +289,7 @@ module controlUnit (input [31:0] inst, output reg alusrc, memRead, memToReg, reg
 			7'b1101111: begin // jal
 				jal = 1;
 			end
-			7'b1100011: begin // beq, bltu
+			7'b1100011: begin // beq
 				aluop = `SUB; 
 				case (inst[14:12])
 					3'b000: beq = 1;
@@ -319,3 +326,29 @@ module dataHazard (
     end
 endmodule
 
+module hazardDetection (input [4:0] rs1, rs2, wb_rd1, wb_rd2, input MEM1, MEM2, branch, branch_nx, output reg stall);
+
+	always @(*) begin
+		
+		stall <= 0;
+
+		if(MEM1 && (rs1 == wb_rd1 || rs2 == wb_rd1)) stall <= 1;
+
+		if(branch && MEM2 && (rs1 == wb_rd2 || rs2 == wb_rd2)) stall <= 1;
+
+		if(branch_nx) stall <= 1;
+
+	end
+endmodule
+
+module registerpc #(parameter n) (input clk, load, rst, input [n - 1:0] in, in2, output reg [n - 1:0] out);
+	always @(posedge clk, posedge rst) begin
+		if (rst)
+			out <= 0;
+		else
+			out <= in;
+	end
+	always @(posedge load) begin
+		out <= in2;
+	end
+endmodule
